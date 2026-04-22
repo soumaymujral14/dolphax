@@ -139,3 +139,128 @@ def aggregate_ratings(gemini_rating: dict, openai_rating: dict) -> dict:
         "final_score": final_score,
         "top_improvements": all_improvements[:3]  # Top 3 only
     }
+
+
+# ============================================================================
+# STAGE 5: OUTPUT VERIFIER - Enhanced for Pipeline
+# ============================================================================
+# Used by the 6-stage pipeline to verify output quality with a different model
+
+def verify_output_with_local_model(prompt: str, output: str, verifier_model: str) -> dict:
+    """
+    STAGE 5 - OUTPUT VERIFIER: Verify output quality using a different model
+    
+    Scores output 0-100:
+    - PASS: 90+ (excellent)
+    - WARN: 70-89 (acceptable but needs improvement)
+    - FAIL: 0-69 (poor quality)
+    
+    Evaluates:
+    1. Correctness: Is the output accurate? Free of hallucinations?
+    2. Completeness: Does it fully address the task?
+    3. Format Quality: Does it match expected output format?
+    4. Clarity: Is it well-structured and easy to understand?
+    
+    Returns: Comprehensive verification report with score, issues, and suggestions
+    """
+    from ollama_client import generate
+    
+    verification_prompt = f"""You are an expert quality verifier. Evaluate this response:
+
+ORIGINAL TASK: {prompt}
+
+RESPONSE TO VERIFY:
+{output}
+
+Score the response (0-100) on these criteria:
+1. **Correctness** (0-10): Is it factually accurate? Free of hallucinations?
+2. **Completeness** (0-10): Does it fully address the task?
+3. **Format Quality** (0-10): Does it match expected output format?
+4. **Clarity** (0-10): Is it well-structured and understandable?
+
+Calculate overall_score as average of the 4 metrics.
+Determine status: 90+ = PASS, 70-89 = WARN, 0-69 = FAIL
+
+List specific issues found (if any).
+Provide actionable suggestions for improvement (if score < 90).
+
+Respond with ONLY valid JSON (no other text):
+{{
+    "overall_score": <0-100>,
+    "correctness": <0-10>,
+    "completeness": <0-10>,
+    "format_quality": <0-10>,
+    "clarity": <0-10>,
+    "status": "PASS|WARN|FAIL",
+    "flagged_issues": ["<specific issue>", "<specific issue>"],
+    "critical_error": "<if any, else null>",
+    "suggestions": ["<actionable fix>", "<actionable fix>"]
+}}"""
+    
+    response = generate(verifier_model, verification_prompt)
+    
+    try:
+        # Extract JSON from response
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = json.loads(response)
+    except:
+        print(f"[VERIFIER] Failed to parse verification response, using fallback")
+        result = {
+            "overall_score": 75,
+            "correctness": 7,
+            "completeness": 7,
+            "format_quality": 7,
+            "clarity": 7,
+            "status": "WARN",
+            "flagged_issues": ["Unable to parse detailed verification"],
+            "critical_error": None,
+            "suggestions": ["Review output manually for quality assurance"]
+        }
+    
+    # Normalize score to 0-100
+    score = result.get("overall_score", 75)
+    if isinstance(score, str):
+        try:
+            score = int(score)
+        except:
+            score = 75
+    score = max(0, min(100, score))  # Clamp to 0-100
+    
+    # Determine status based on score
+    if score >= 90:
+        status = "PASS"
+    elif score >= 70:
+        status = "WARN"
+    else:
+        status = "FAIL"
+    
+    # Extract metrics with defaults
+    correctness = result.get("correctness", 7)
+    completeness = result.get("completeness", 7)
+    format_quality = result.get("format_quality", 7)
+    clarity = result.get("clarity", 7)
+    
+    # Ensure metrics are ints
+    try:
+        correctness = int(correctness)
+        completeness = int(completeness)
+        format_quality = int(format_quality)
+        clarity = int(clarity)
+    except:
+        correctness = completeness = format_quality = clarity = 7
+    
+    return {
+        "overall_score": score,
+        "correctness": correctness,
+        "completeness": completeness,
+        "format_quality": format_quality,
+        "clarity": clarity,
+        "status": status,
+        "flagged_issues": result.get("flagged_issues", []),
+        "critical_error": result.get("critical_error"),
+        "suggestions": result.get("suggestions", []),
+        "needs_improvement": score < 90
+    }

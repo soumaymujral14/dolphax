@@ -11,6 +11,7 @@ load_dotenv()
 from router import classify_prompt
 from ollama_client import generate, get_available_models
 from rater import rate_with_gemini, rate_with_openai, aggregate_ratings
+from pipeline import run_pipeline
 
 # MODE: local_only = no API rating (default), hybrid = enable Gemini/OpenAI rating
 MODE = "local_only"
@@ -51,6 +52,9 @@ class RegenerateRequest(BaseModel):
     prompt: str
     improvements: list[str]
     original_output: str
+
+class PipelineRequest(BaseModel):
+    prompt: str
 
 # =========================
 # Helpers
@@ -592,6 +596,58 @@ Provide a thorough, improved response."""
         "token_stats": savings,
         "comparison": comparison
     }
+
+@app.post("/api/pipeline")
+async def pipeline_endpoint(request: PipelineRequest):
+    """
+    NEW: 6-Stage Dolphax AI Pipeline
+    
+    Stages:
+    1. PROMPT ENHANCER - rewrites input to be precise (<150 words)
+    2. TASK CLASSIFIER - detects task type, complexity, expected tokens
+    3. MODEL SELECTOR - picks ONE best model + different verifier
+    4. EXECUTOR - runs task with selected model
+    5. OUTPUT VERIFIER - different model scores output (0-100)
+    6. IMPROVER - fixes flagged issues if score < 90
+    
+    Returns: Complete pipeline execution trace with all stages and final output
+    """
+    start_time = time.time()
+    
+    print(f"[PIPELINE] Starting 6-stage pipeline for prompt: {request.prompt[:50]}...")
+    
+    try:
+        # Run the complete 6-stage pipeline
+        pipeline_result = run_pipeline(request.prompt)
+        
+        elapsed_time = round(time.time() - start_time, 2)
+        
+        # Calculate token savings
+        if pipeline_result["status"] == "completed":
+            final_output = pipeline_result["final_output"]
+            savings = calculate_real_savings(request.prompt, final_output)
+            pipeline_result["token_stats"] = savings
+        
+        pipeline_result["total_processing_time"] = elapsed_time
+        
+        print(f"[PIPELINE] Pipeline complete in {elapsed_time}s")
+        print(f"[PIPELINE] Final status: {pipeline_result['verification_status']}")
+        
+        return pipeline_result
+        
+    except Exception as e:
+        import traceback
+        elapsed_time = round(time.time() - start_time, 2)
+        
+        print(f"[PIPELINE] ERROR: {str(e)}")
+        print(traceback.format_exc())
+        
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "processing_time": elapsed_time
+        }
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():

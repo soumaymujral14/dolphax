@@ -1,4 +1,4 @@
-# router.py - Smart Prompt Classifier with Creative Detection
+# router.py - Smart Prompt Classifier with Model Selector
 
 def classify_prompt(prompt: str) -> dict:
     prompt_lower = prompt.lower()
@@ -78,4 +78,95 @@ def classify_prompt(prompt: str) -> dict:
         "category": category,
         "model": model,
         "confidence_score": confidence
+    }
+
+
+# ============================================================================
+# STAGE 3: MODEL SELECTOR - Enhanced for Pipeline
+# ============================================================================
+# This function is used by the pipeline orchestrator for intelligent model selection
+# Priority: Accuracy → Token Efficiency → Speed (when accuracy_critical=False)
+
+def select_best_model(task_type: str, complexity: str, accuracy_critical: bool) -> dict:
+    """
+    STAGE 3 - MODEL SELECTOR: Select ONE best model + different verifier model
+    
+    Model capabilities:
+    - codellama:latest: Coding (accuracy: 9/10, speed: 7/10, efficiency: 8/10)
+    - deepseek-r1:latest: Math/Reasoning (accuracy: 9/10, speed: 5/10, efficiency: 7/10)
+    - qwen3:latest: General/Creative/Writing (accuracy: 8/10, speed: 8/10, efficiency: 8/10)
+    
+    Selection logic:
+    - If accuracy_critical: Pick highest accuracy model for task type
+    - Otherwise: Balance efficiency and speed
+    - Verifier model is ALWAYS different from selected model
+    """
+    
+    # Model profiles
+    models_db = {
+        "codellama:latest": {
+            "best_for": ["coding"],
+            "accuracy": 9,
+            "speed": 7,
+            "efficiency": 8,
+            "description": "Code generation and programming tasks"
+        },
+        "deepseek-r1:latest": {
+            "best_for": ["math", "reasoning", "summarization", "research"],
+            "accuracy": 9,
+            "speed": 5,
+            "efficiency": 7,
+            "description": "Deep reasoning and mathematical tasks"
+        },
+        "qwen3:latest": {
+            "best_for": ["general", "creative", "writing", "classification"],
+            "accuracy": 8,
+            "speed": 8,
+            "efficiency": 8,
+            "description": "General tasks, creative writing, and classification"
+        }
+    }
+    
+    # Decision tree for model selection
+    if accuracy_critical:
+        # ACCURACY PRIORITY: Choose most accurate model for this task
+        if task_type == "coding":
+            selected_model = "codellama:latest"
+            # Verifier must be different: pick deepseek or qwen
+            verifier_model = "deepseek-r1:latest" if complexity == "complex" else "qwen3:latest"
+        
+        elif task_type in ["math", "reasoning"]:
+            selected_model = "deepseek-r1:latest"
+            # Verifier must be different: pick codellama or qwen
+            verifier_model = "codellama:latest" if "code" in task_type else "qwen3:latest"
+        
+        else:  # general, creative, writing, classification, research, summarization
+            selected_model = "qwen3:latest"
+            # Verifier must be different: pick deepseek for complex, codellama otherwise
+            verifier_model = "deepseek-r1:latest" if complexity == "complex" else "codellama:latest"
+    
+    else:
+        # EFFICIENCY + SPEED PRIORITY: Balance token efficiency and response speed
+        if task_type == "coding":
+            selected_model = "codellama:latest"
+            verifier_model = "qwen3:latest"
+        
+        else:  # For other tasks, qwen3 is faster and efficient
+            selected_model = "qwen3:latest"
+            # Verifier: alternate between deepseek and codellama
+            verifier_model = "deepseek-r1:latest" if complexity == "complex" else "codellama:latest"
+    
+    reasoning = (
+        f"Selected '{selected_model}' for {task_type} ({complexity} complexity, "
+        f"accuracy_critical={accuracy_critical}). Using '{verifier_model}' for verification."
+    )
+    
+    print(f"[ROUTER] MODEL SELECTOR: {reasoning}")
+    
+    return {
+        "selected_model": selected_model,
+        "verifier_model": verifier_model,
+        "reasoning": reasoning,
+        "selected_model_info": models_db[selected_model],
+        "verifier_model_info": models_db[verifier_model]
     }

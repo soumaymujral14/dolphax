@@ -53,3 +53,9 @@ def get_available_models() -> list:
     except Exception as e:
         print(f"[OLLAMA] Could not fetch models: {str(e)}")
         return []
+
+def count_tokens_local(text: str) -> int:
+    """
+    Estimate token count (4 chars ≈ 1 token - common approximation)
+    """
+    return max(1, len(text) // 4)
