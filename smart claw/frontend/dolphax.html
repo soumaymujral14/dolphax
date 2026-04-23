@@ -376,6 +376,85 @@
   /* ─── DISABLED STATE ─── */
   #send-btn:disabled { background: var(--bg3); color: var(--dimmed); cursor: not-allowed; transform: none; }
   #msg-input:disabled { opacity: 0.5; }
+
+  /* ─── PIPELINE MODE ─── */
+  .mode-toggle {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 8px; padding: 3px 3px;
+    font-size: 10px; font-family: 'DM Mono', monospace;
+  }
+  .mode-btn {
+    padding: 4px 12px; border: none; border-radius: 6px;
+    background: transparent; color: var(--muted); cursor: pointer;
+    transition: all 0.15s; font-family: 'DM Mono', monospace; font-size: 10px;
+  }
+  .mode-btn.active {
+    background: var(--accent2); color: #0a0a0a; font-weight: 600;
+  }
+
+  /* ─── PIPELINE VISUALIZATION ─── */
+  .pipeline-container {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin: 16px 0;
+    animation: fadeUp 0.35s ease;
+  }
+  .pipeline-header {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent2); margin-bottom: 12px;
+    font-family: 'DM Mono', monospace;
+  }
+  .pipeline-stages {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .pipeline-stage {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; background: var(--bg2);
+    border: 1px solid var(--border); border-radius: 8px;
+    font-size: 11px; font-family: 'DM Mono', monospace;
+    transition: all 0.2s;
+  }
+  .pipeline-stage.running {
+    border-color: var(--accent2); background: rgba(201,169,110,0.05);
+  }
+  .pipeline-stage.completed {
+    border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.05);
+  }
+  .pipeline-stage.failed {
+    border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.05);
+  }
+  .pipeline-stage-icon {
+    width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; flex-shrink: 0;
+  }
+  .pipeline-stage-icon.running {
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0); }
+    to { transform: rotate(360deg); }
+  }
+  .pipeline-stage-info { flex: 1; }
+  .pipeline-stage-name { font-weight: 600; color: var(--text); }
+  .pipeline-stage-detail { font-size: 9px; color: var(--muted); margin-top: 1px; }
+  .pipeline-score {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px; border-radius: 4px;
+    font-size: 9px; font-weight: 600; font-family: 'DM Mono', monospace;
+  }
+  .pipeline-score.pass {
+    background: rgba(74,222,128,0.15); color: #4ade80; border: 1px solid rgba(74,222,128,0.25);
+  }
+  .pipeline-score.warn {
+    background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.25);
+  }
+  .pipeline-score.fail {
+    background: rgba(248,113,113,0.15); color: #f87171; border: 1px solid rgba(248,113,113,0.25);
+  }
+
 </style>
 </head>
 <body>
@@ -466,6 +545,10 @@
         <div class="topbar-title">Dolphax</div>
       </div>
       <div class="topbar-right">
+        <div class="mode-toggle" id="mode-toggle">
+          <button class="mode-btn active" data-mode="query" onclick="setMode('query')">Regular</button>
+          <button class="mode-btn" data-mode="pipeline" onclick="setMode('pipeline')">Pipeline</button>
+        </div>
         <div class="model-pill">
           <div class="model-dot"></div>
           auto-route
@@ -522,10 +605,18 @@
   let msgCount = 0;
   let selectedCategory = "auto";
   let isSending = false;
+  let pipelineMode = false;
   
   // Use relative URL when served by FastAPI (same origin = no CORS issues)
   // Fall back to absolute URL only if opened directly as a file
   const API_URL = (location.protocol === 'file:') ? 'http://127.0.0.1:8000' : '';
+
+  function setMode(mode) {
+    pipelineMode = (mode === 'pipeline');
+    document.querySelectorAll('#mode-toggle .mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
+    console.log(`[DOLPHAX] Mode changed to: ${mode}`);
+  }
 
   function toggleSidebar() {
     sidebarOpen = !sidebarOpen;
@@ -588,31 +679,26 @@
       textEl.textContent = 'Offline — run: uvicorn main:app --reload';
     }
   }
+function formatOutput(raw) {
+  raw = String(raw || "");
+  let s = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-  function formatOutput(raw) {
-    let s = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const id = 'cb-' + Math.random().toString(36).slice(2, 7);
+    return `<div class="code-block-wrap">
+      <div class="code-lang-label">${lang || 'code'}</div>
+      <pre id="${id}">${code.trim()}</pre>
+      <button class="copy-btn" onclick="copyCode('${id}',this)">copy</button>
+    </div>`;
+  });
+    
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.split('\n\n').map(p => p.trim() ? `<p>${p.replace(/\n/g,'<br>')}</p>` : '').join('');
 
-    // Fenced code blocks ```lang\ncode\n```
-    s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-      const id = 'cb-' + Math.random().toString(36).slice(2, 7);
-      return `<div class="code-block-wrap">
-        <div class="code-lang-label">${lang || 'code'}</div>
-        <pre id="${id}">${code.trim()}</pre>
-        <button class="copy-btn" onclick="copyCode('${id}',this)">copy</button>
-      </div>`;
-    });
-
-    // Inline code
-    s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-    // Bold **text**
-    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    // Paragraphs
-    s = s.split('\n\n').map(p => p.trim() ? `<p>${p.replace(/\n/g,'<br>')}</p>` : '').join('');
-
-    return s || `<p>${raw.replace(/\n/g,'<br>')}</p>`;
-  }
+  return s || `<p>${raw.replace(/\n/g,'<br>')}</p>`;
+}
+ 
 
   function copyCode(id, btn) {
     navigator.clipboard.writeText(document.getElementById(id).textContent).then(() => {
@@ -620,6 +706,144 @@
       btn.classList.add('copied');
       setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 2000);
     });
+  }
+
+  function displayPipelineStage(container, stageName, status, detail = '') {
+    const statusIcon = status === 'running' ? '⟳' : status === 'completed' ? '✓' : status === 'failed' ? '✗' : '○';
+    const stageMapping = {
+      'enhancer': 'Stage 1: Prompt Enhancer',
+      'classifier': 'Stage 2: Task Classifier',
+      'model_selector': 'Stage 3: Model Selector',
+      'executor': 'Stage 4: Executor',
+      'verifier': 'Stage 5: Output Verifier',
+      'improver': 'Stage 6: Improver'
+    };
+    const displayName = stageMapping[stageName] || stageName;
+    return `
+      <div class="pipeline-stage ${status}">
+        <div class="pipeline-stage-icon ${status}">${statusIcon}</div>
+        <div class="pipeline-stage-info">
+          <div class="pipeline-stage-name">${displayName}</div>
+          ${detail ? `<div class="pipeline-stage-detail">${detail}</div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function createPipelineContainer() {
+    return `
+      <div class="pipeline-container">
+        <div class="pipeline-header">🔄 Dolphax Pipeline (6 Stages)</div>
+        <div class="pipeline-stages" id="pipeline-stages">
+          ${['enhancer', 'classifier', 'model_selector', 'executor', 'verifier', 'improver'].map(s => displayPipelineStage(null, s, 'pending')).join('')}
+        </div>
+      </div>`;
+  }
+
+  function updatePipelineStage(stageName, status, detail = '') {
+    const container = document.querySelector('.pipeline-stages');
+    if (!container) return;
+    const stages = container.querySelectorAll('.pipeline-stage');
+    const stageIndex = ['enhancer', 'classifier', 'model_selector', 'executor', 'verifier', 'improver'].indexOf(stageName);
+    if (stageIndex >= 0 && stages[stageIndex]) {
+      const newHtml = displayPipelineStage(null, stageName, status, detail);
+      stages[stageIndex].outerHTML = newHtml;
+    }
+  }
+
+  async function sendPipelineQuery(text) {
+    const msgs = document.getElementById('messages');
+    const welcome = document.getElementById('welcome');
+    if (welcome) welcome.style.display = 'none';
+
+    // User bubble
+    const userDiv = document.createElement('div');
+    userDiv.className = 'msg msg-user';
+    userDiv.innerHTML = `<div class="bubble">${escapeHtml(text)}</div>`;
+    msgs.appendChild(userDiv);
+
+    // Pipeline container
+    const pipelineDiv = document.createElement('div');
+    pipelineDiv.className = 'msg msg-ai';
+    pipelineDiv.innerHTML = createPipelineContainer();
+    msgs.appendChild(pipelineDiv);
+    scrollBottom();
+
+    try {
+      const response = await fetch(`${API_URL}/api/pipeline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: text })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Backend error: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // Update stages as they're revealed
+      const stageOrder = ['enhancer', 'classifier', 'model_selector', 'executor', 'verifier', 'improver'];
+      for (const stage of stageOrder) {
+        if (data.stages && data.stages[stage]) {
+          const stageData = data.stages[stage];
+          if (stageData.status === 'success') {
+            updatePipelineStage(stage, 'completed', stageData.tokens_used ? `${stageData.tokens_used} tokens` : '');
+          } else if (stageData.status === 'error') {
+            updatePipelineStage(stage, 'failed', stageData.error);
+          } else if (stageData.status === 'skipped') {
+            updatePipelineStage(stage, 'completed', '(skipped)');
+          }
+        }
+      }
+
+      // Add final output
+      const outputDiv = document.createElement('div');
+      outputDiv.className = 'msg msg-ai';
+      
+      let scoreHtml = '';
+      if (data.final_score !== undefined) {
+        const scoreStatus = data.final_score >= 90 ? 'pass' : data.final_score >= 70 ? 'warn' : 'fail';
+        scoreHtml = `
+          <div style="margin-bottom: 8px;">
+            <span class="pipeline-score ${scoreStatus}">
+              Verification: ${Math.round(data.final_score)}/100 ${data.verification_status || scoreStatus.toUpperCase()}
+            </span>
+          </div>`;
+      }
+
+      if (data.improvement_applied) {
+        scoreHtml += `
+          <div style="background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.2); border-radius: 6px; padding: 8px; margin-bottom: 12px; font-size: 11px; color: #4ade80; font-family: 'DM Mono', monospace;">
+            ✓ Output improved in Stage 6
+          </div>`;
+      }
+
+      outputDiv.innerHTML = `
+        <div class="ai-avatar">D</div>
+        <div class="ai-body">
+          <div class="ai-name">Dolphax (Pipeline Result)</div>
+          ${scoreHtml}
+          <div class="ai-text">${formatOutput(data.final_output)}</div>
+        </div>`;
+      msgs.appendChild(outputDiv);
+      
+      if (data.token_stats) {
+        updateStats(data.token_stats);
+      }
+      scrollBottom();
+
+    } catch (error) {
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'msg msg-ai';
+      errorDiv.innerHTML = `
+        <div class="ai-avatar">D</div>
+        <div class="ai-body">
+          <div class="ai-name">Dolphax</div>
+          <div class="ai-text" style="color: #ff6b6b;">Pipeline error: ${escapeHtml(error.message)}</div>
+        </div>`;
+      msgs.appendChild(errorDiv);
+      scrollBottom();
+    }
   }
 
   async function sendMessage() {
@@ -634,23 +858,33 @@
     
     input.value = '';
     autoResize(input);
+    addToHistory(text);
 
-    // Hide welcome
+    try {
+      if (pipelineMode) {
+        await sendPipelineQuery(text);
+      } else {
+        await sendRegularQuery(text);
+      }
+    } finally {
+      isSending = false;
+      document.getElementById('send-btn').disabled = false;
+      document.getElementById('msg-input').disabled = false;
+      document.getElementById('msg-input').focus();
+    }
+  }
+
+  async function sendRegularQuery(text) {
     const welcome = document.getElementById('welcome');
-    if (welcome) { welcome.style.display = 'none'; }
+    if (welcome) welcome.style.display = 'none';
 
     const msgs = document.getElementById('messages');
-
-    // User bubble
     const userDiv = document.createElement('div');
     userDiv.className = 'msg msg-user';
     userDiv.innerHTML = `<div class="bubble">${escapeHtml(text)}</div>`;
     msgs.appendChild(userDiv);
     scrollBottom();
 
-    addToHistory(text);
-
-    // Thinking
     const thinkDiv = document.createElement('div');
     thinkDiv.className = 'msg msg-ai';
     thinkDiv.innerHTML = `
@@ -770,11 +1004,6 @@
         </div>`;
       msgs.appendChild(errorDiv);
       scrollBottom();
-    } finally {
-      isSending = false;
-      document.getElementById('send-btn').disabled = false;
-      document.getElementById('msg-input').disabled = false;
-      document.getElementById('msg-input').focus();
     }
   }
 

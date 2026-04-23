@@ -17,13 +17,12 @@ Dolphax uses a smart prompt classifier (router) to analyze incoming requests and
 
 2. **Install dependencies**:
    ```bash
-   cd backend
    pip install -r requirements.txt
    ```
 
 3. **Start the server**:
    ```bash
-   uvicorn main:app --reload
+   uvicorn backend.main:app --reload
    ```
 
 The API will be available at `http://localhost:8000`

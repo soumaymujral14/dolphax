@@ -4,9 +4,15 @@
 import json
 import re
 from typing import Dict, List, Tuple
-from ollama_client import generate, count_tokens_local
-from router import classify_prompt, select_best_model
-from rater import verify_output_with_local_model
+
+try:
+    from .ollama_client import generate, count_tokens_local
+    from .router import classify_prompt, select_best_model
+    from .rater import verify_output_with_local_model
+except ImportError:
+    from ollama_client import generate, count_tokens_local
+    from router import classify_prompt, select_best_model
+    from rater import verify_output_with_local_model
 
 
 # ============================================================================
@@ -309,28 +315,29 @@ def run_pipeline(raw_prompt: str) -> Dict:
         print("[PIPELINE] Stage 4: Executor")
         stage4 = stage4_execute_task(selected_model, enhanced_prompt, stage2["expected_output_tokens"])
         pipeline_trace["stages"]["executor"] = stage4
-        raw_output = stage4["raw_output"]
+        raw_output = str(stage4.get("raw_output") or "")
         pipeline_trace["total_tokens"] += stage4["tokens_used"]
         
         # Stage 5: Verify
         print("[PIPELINE] Stage 5: Output Verifier")
         stage5 = stage5_verify_output(enhanced_prompt, raw_output, verifier_model)
+        stage5 = stage5 if isinstance(stage5, dict) else {"overall_score": 75, "status": "WARN", "flagged_issues": [], "corrections": [], "hallucination_detected": False, "send_to_improver": False}
         pipeline_trace["stages"]["verifier"] = stage5
-        score = stage5["overall_score"]
-        verification_status = stage5["status"]
-        flagged_issues = stage5["flagged_issues"]
-        pipeline_trace["total_tokens"] += stage5["tokens_used"]
+        score = stage5.get("overall_score", 75)
+        verification_status = stage5.get("status", "WARN")
+        flagged_issues = stage5.get("flagged_issues", [])
+        pipeline_trace["total_tokens"] += stage5.get("tokens_used", 0)
         
         # Stage 6: Improve (only if needed)
         if score < 90 and flagged_issues:
             print("[PIPELINE] Stage 6: Improver")
             stage6 = stage6_improve_output(raw_output, enhanced_prompt, flagged_issues, selected_model)
             pipeline_trace["stages"]["improver"] = stage6
-            final_output = stage6["improved_output"]
-            pipeline_trace["total_tokens"] += stage6["tokens_used"]
+            final_output = str(stage6.get("improved_output") or raw_output or "")
+            pipeline_trace["total_tokens"] += stage6.get("tokens_used", 0)
             improvement_applied = True
         else:
-            final_output = raw_output
+            final_output = str(raw_output or "")
             improvement_applied = False
             pipeline_trace["stages"]["improver"] = {
                 "stage": "improver",

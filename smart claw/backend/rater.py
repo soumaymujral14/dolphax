@@ -5,6 +5,11 @@ import os
 import json
 import re
 
+try:
+    from .ollama_client import generate
+except ImportError:
+    from ollama_client import generate
+
 # Load API keys from environment
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -163,7 +168,20 @@ def verify_output_with_local_model(prompt: str, output: str, verifier_model: str
     
     Returns: Comprehensive verification report with score, issues, and suggestions
     """
-    from ollama_client import generate
+    # Type safety: Ensure None/empty output returns default dict
+    if not output or output is None:
+        return {
+            "overall_score": 75,
+            "correctness": 7,
+            "completeness": 7,
+            "format_quality": 7,
+            "clarity": 7,
+            "status": "WARN",
+            "flagged_issues": ["Output is empty or None"],
+            "critical_error": "No output to verify",
+            "suggestions": ["Ensure executor produces non-empty output"],
+            "needs_improvement": True
+        }
     
     verification_prompt = f"""You are an expert quality verifier. Evaluate this response:
 
@@ -178,7 +196,8 @@ Score the response (0-100) on these criteria:
 3. **Format Quality** (0-10): Does it match expected output format?
 4. **Clarity** (0-10): Is it well-structured and understandable?
 
-Calculate overall_score as average of the 4 metrics.
+Calculate overall_score on a 0-100 scale.
+If the four sub-scores are 0-10, multiply their average by 10.
 Determine status: 90+ = PASS, 70-89 = WARN, 0-69 = FAIL
 
 List specific issues found (if any).
@@ -224,9 +243,11 @@ Respond with ONLY valid JSON (no other text):
     score = result.get("overall_score", 75)
     if isinstance(score, str):
         try:
-            score = int(score)
+            score = float(score)
         except:
             score = 75
+    if score <= 10:
+        score *= 10
     score = max(0, min(100, score))  # Clamp to 0-100
     
     # Determine status based on score
@@ -245,10 +266,10 @@ Respond with ONLY valid JSON (no other text):
     
     # Ensure metrics are ints
     try:
-        correctness = int(correctness)
-        completeness = int(completeness)
-        format_quality = int(format_quality)
-        clarity = int(clarity)
+        correctness = int(float(correctness))
+        completeness = int(float(completeness))
+        format_quality = int(float(format_quality))
+        clarity = int(float(clarity))
     except:
         correctness = completeness = format_quality = clarity = 7
     
